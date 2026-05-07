@@ -57,10 +57,10 @@ export default function SolarPanel3D({ temp = 25, cloudCover = 0 }) {
           maxPolarAngle={Math.PI / 2 - 0.05} // Keep camera above ground
         />
         
-        {/* Simple Ground Plane for shadows */}
+        {/* Transparent ground plane that catches shadows */}
         <mesh position={[0, -1, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[50, 50]} />
-          <meshStandardMaterial color="#0f172a" />
+          <shadowMaterial opacity={0.4} />
         </mesh>
       </Canvas>
     </div>
