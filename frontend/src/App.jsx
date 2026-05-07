@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Thermometer, Zap, Activity, BatteryCharging, Sliders, AlertTriangle } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceArea } from 'recharts';
+import { Thermometer, Zap, Activity, BatteryCharging, Sliders, AlertTriangle, Info } from 'lucide-react';
 import SolarPanel3D from './components/SolarPanel3D';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -10,6 +10,7 @@ function App() {
   const [liveData, setLiveData] = useState(null);
   const [forecastData, setForecastData] = useState([]);
   const [error, setError] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
   
   // Simulation Controls
   const [isManualMode, setIsManualMode] = useState(false);
@@ -26,10 +27,23 @@ function App() {
       try {
         const res = await axios.get(`${API_BASE_URL}/forecast`);
         if (res.data && Array.isArray(res.data)) {
-          const formatted = res.data.map(d => ({
-            ...d,
-            timeLabel: new Date(d.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }));
+          const formatted = res.data.map(d => {
+            // "2026-05-08T00:00" without 'Z' will be parsed as local time zone
+            const dateObj = new Date(d.time);
+            const hour = dateObj.getHours();
+            
+            // Nighttime predictive logic fix
+            // Mark as night if it's 7PM to 5:59AM, or if radiation/cooled_power is 0
+            const isNight = hour >= 19 || hour < 6 || d.cooled_power <= 0;
+            
+            return {
+              ...d,
+              predicted_power: isNight ? 0 : d.predicted_power,
+              cooled_power: isNight ? 0 : d.cooled_power,
+              is_night: isNight,
+              timeLabel: dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+          });
           setForecastData(formatted);
         } else if (res.data && res.data.error) {
           setError(res.data.error);
@@ -96,16 +110,79 @@ function App() {
     }
   }
 
+  // Calculate Night Periods for Chart Shading
+  const nightPeriods = [];
+  let currentNightStart = null;
+  forecastData.forEach((d, i) => {
+    if (d.is_night && !currentNightStart) {
+      currentNightStart = d.timeLabel;
+    } else if (!d.is_night && currentNightStart) {
+      nightPeriods.push({ start: currentNightStart, end: forecastData[i - 1].timeLabel });
+      currentNightStart = null;
+    }
+  });
+  if (currentNightStart && forecastData.length > 0) {
+    nightPeriods.push({ start: currentNightStart, end: forecastData[forecastData.length - 1].timeLabel });
+  }
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans selection:bg-cyan-500/30">
-      <header className="mb-8 border-b border-slate-800 pb-5">
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 rounded-full bg-cyan-500 animate-pulse shadow-[0_0_10px_rgba(6,182,212,0.6)]"></div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-            Solar Panel Digital Twin
-          </h1>
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans selection:bg-cyan-500/30 relative">
+      {/* Project Overview Modal */}
+      {showInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full p-6 shadow-2xl relative">
+            <button 
+              onClick={() => setShowInfo(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-800 rounded-md p-1 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+            <h2 className="text-2xl font-bold text-white mb-6">Information & Methodology</h2>
+            
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-cyan-400 mb-2">Data Source</h3>
+                <p className="text-slate-300 leading-relaxed bg-slate-950 p-4 rounded-lg border border-slate-800 shadow-inner">
+                  5,000+ data points collected over a 3-week IoT deployment at RVCE.
+                </p>
+              </div>
+              
+              <div>
+                <h3 className="text-lg font-semibold text-purple-400 mb-2">Methodology</h3>
+                <p className="text-slate-300 leading-relaxed bg-slate-950 p-4 rounded-lg border border-slate-800 shadow-inner">
+                  IoT hardware (ESP32/INA219) established the baseline. A Random Forest Regressor was trained to predict thermal efficiency loss based on historical Open-Meteo weather patterns.
+                </p>
+              </div>
+              
+              <div>
+                <h3 className="text-lg font-semibold text-emerald-400 mb-2">Project Goal</h3>
+                <p className="text-slate-300 leading-relaxed bg-slate-950 p-4 rounded-lg border border-slate-800 shadow-inner">
+                  To quantify energy recovery potential for a passive cooling system.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
-        <p className="text-slate-400 text-sm mt-2 ml-6 tracking-wide uppercase">Real-time Telemetry & Predictive Analytics</p>
+      )}
+
+      <header className="mb-8 border-b border-slate-800 pb-5 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full bg-cyan-500 animate-pulse shadow-[0_0_10px_rgba(6,182,212,0.6)]"></div>
+            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+              Solar Panel Digital Twin
+            </h1>
+          </div>
+          <p className="text-slate-400 text-sm mt-2 ml-6 tracking-wide uppercase">Real-time Telemetry & Predictive Analytics</p>
+        </div>
+        
+        <button 
+          onClick={() => setShowInfo(true)}
+          className="text-slate-300 hover:text-white px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700 flex items-center gap-2 text-sm font-semibold shadow-md"
+        >
+          <Info size={18} />
+          Project Overview
+        </button>
       </header>
 
       {error && (
@@ -196,7 +273,7 @@ function App() {
       </div>
 
       {/* Main Content Areas */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[500px]">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[500px]">
         {/* 3D Visualisation (Left Side, 5 columns) */}
         <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col relative overflow-hidden shadow-xl shadow-black/40 group transition-all duration-300 hover:border-slate-700">
           <div className="flex items-center justify-between mb-4">
@@ -204,11 +281,11 @@ function App() {
             <div className="px-2 py-1 bg-slate-800 text-xs font-mono text-slate-400 rounded border border-slate-700">R3F / Three.js</div>
           </div>
           
-          <div className="flex-1 rounded-lg overflow-hidden border border-slate-800/80 bg-slate-950/50 relative">
+          <div className="flex-1 rounded-lg overflow-hidden border border-slate-800/80 bg-slate-950/50 relative min-h-[350px]">
             
             {/* Comparison Overlay Card */}
             {liveData && (
-              <div className="absolute top-3 left-3 z-10 bg-slate-950/80 backdrop-blur-md border border-slate-700 p-3 rounded-lg shadow-lg pointer-events-none">
+              <div className="absolute top-3 left-3 z-20 bg-slate-950/80 backdrop-blur-md border border-slate-700 p-3 rounded-lg shadow-lg pointer-events-none">
                 <p className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Live Power Comparison</p>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex justify-between items-center gap-6">
@@ -223,10 +300,19 @@ function App() {
               </div>
             )}
             
-            <SolarPanel3D 
-              temp={liveData?.panel_temp || 25} 
-              cloudCover={liveData?.cloud_cover || 0} 
-            />
+            {/* Thermal Context Indicator */}
+            <div className="absolute bottom-3 left-3 right-3 z-20 bg-slate-900/90 border border-slate-700 p-2 rounded shadow-lg pointer-events-none text-center backdrop-blur-sm">
+              <p className="text-xs text-slate-400 leading-tight">
+                <span className="text-cyan-400 font-semibold">Thermal Context:</span> Model trained on real-world thermal spikes (up to 65°C) observed during local field tests.
+              </p>
+            </div>
+            
+            <div className="absolute inset-0 z-10">
+              <SolarPanel3D 
+                temp={liveData?.panel_temp || 25} 
+                cloudCover={liveData?.cloud_cover || 0} 
+              />
+            </div>
           </div>
         </div>
 
@@ -240,10 +326,21 @@ function App() {
             </div>
           </div>
           
-          <div className="flex-1 w-full min-h-[300px] bg-slate-950/30 rounded-lg border border-slate-800 p-2">
+          <div className="flex-1 w-full min-h-[350px] bg-slate-950/30 rounded-lg border border-slate-800 p-2 flex flex-col">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={forecastData} margin={{ top: 20, right: 20, left: -10, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                
+                {nightPeriods.map((period, i) => (
+                  <ReferenceArea 
+                    key={`night-${i}`} 
+                    x1={period.start} 
+                    x2={period.end} 
+                    fill="#020617" 
+                    fillOpacity={0.6} 
+                  />
+                ))}
+
                 <XAxis 
                   dataKey="timeLabel" 
                   stroke="#64748b" 
@@ -294,6 +391,9 @@ function App() {
                 />
               </LineChart>
             </ResponsiveContainer>
+            <div className="flex justify-center mt-3 mb-1">
+               <span className="flex items-center text-[10px] text-slate-500 font-mono"><span className="w-2.5 h-2.5 rounded-sm bg-[#020617] border border-slate-700 mr-2"></span>Non-Operational Hours (Night / Zero Radiation)</span>
+            </div>
           </div>
         </div>
       </div>
@@ -304,7 +404,6 @@ function App() {
 function TelemetryCard({ title, value, icon, trend, valueColor = "text-slate-50", customBorder = "border-slate-800" }) {
   return (
     <div className={`bg-slate-900 border ${customBorder} rounded-xl p-5 relative overflow-hidden group shadow-lg shadow-black/20 hover:bg-slate-800 transition-colors duration-300`}>
-      {/* Decorative gradient blur */}
       <div className="absolute -right-6 -top-6 w-24 h-24 bg-slate-800 rounded-full blur-2xl group-hover:bg-slate-700 transition-colors duration-500"></div>
       
       <div className="flex justify-between items-start relative z-10">
