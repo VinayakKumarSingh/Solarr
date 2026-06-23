@@ -266,6 +266,43 @@ def train_model_endpoint():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/feature-importance")
+def get_feature_importance():
+    """
+    Exposes feature_importances_ from both loaded ML models, normalized to percentages.
+    """
+    global ml_model_normal, ml_model_cooled
+    if ml_model_normal is None or ml_model_cooled is None:
+        return {"error": "ML models are not loaded. Train the models first."}
+        
+    try:
+        importances_normal = ml_model_normal.feature_importances_
+        importances_cooled = ml_model_cooled.feature_importances_
+        
+        features = ["Ambient Temp", "Panel Temp", "Cloud Cover"]
+        
+        results = [
+            {
+                "feature": features[0],
+                "normalValue": round(float(importances_normal[0]) * 100.0, 2),
+                "cooledValue": round(float(importances_cooled[0]) * 100.0, 2)
+            },
+            {
+                "feature": features[1],
+                "normalValue": round(float(importances_normal[1]) * 100.0, 2),
+                "cooledValue": round(float(importances_cooled[1]) * 100.0, 2)
+            },
+            {
+                "feature": features[2],
+                "normalValue": round(float(importances_normal[2]) * 100.0, 2),
+                "cooledValue": round(float(importances_cooled[2]) * 100.0, 2)
+            }
+        ]
+        return results
+    except Exception as e:
+        return {"error": f"Failed to extract feature importance: {str(e)}"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
