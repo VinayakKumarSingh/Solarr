@@ -4,53 +4,91 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 import joblib
+import json
+from datetime import datetime
+import sklearn
 
 DB_FILE = "solar_simulation.db"
-MODEL_FILE = "model.pkl"
+MODEL_NORMAL_FILE = "model_normal.pkl"
+MODEL_COOLED_FILE = "model_cooled.pkl"
+METADATA_FILE = "model_metadata.json"
 
 def train():
     print("Loading data from database...")
     # 1. Database Connection
     conn = sqlite3.connect(DB_FILE)
-    query = "SELECT timestamp, ambient_temp, cloud_cover, power FROM historical_telemetry"
+    query = """
+        SELECT timestamp, ambient_temp, cloud_cover, panel_temp, power, 
+               cooled_panel_temp, cooled_power 
+        FROM historical_telemetry
+    """
     df = pd.read_sql_query(query, conn)
     conn.close()
 
     # 2. Feature Engineering
     print("Engineering features...")
     df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['hour'] = df['timestamp'].dt.hour
     
     # Drop rows with NaN if any exist
     df = df.dropna()
 
-    # 3. Features and Target Definition
-    X = df[['hour', 'ambient_temp', 'cloud_cover']]
-    y = df['power']
-
-    # 4. Splitting Data and Training
-    print("Splitting data and training model...")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 3. Model 1: Normal Panel
+    print("Training normal model...")
+    X_normal = df[['ambient_temp', 'panel_temp', 'cloud_cover']]
+    y_normal = df['power']
     
-    # Initialize Random Forest Regressor
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
+    X_train_n, X_test_n, y_train_n, y_test_n = train_test_split(
+        X_normal, y_normal, test_size=0.2, random_state=42
+    )
+    
+    model_normal = RandomForestRegressor(n_estimators=100, random_state=42)
+    model_normal.fit(X_train_n, y_train_n)
+    
+    y_pred_n = model_normal.predict(X_test_n)
+    mae_n = mean_absolute_error(y_test_n, y_pred_n)
+    r2_n = r2_score(y_test_n, y_pred_n)
+
+    # 4. Model 2: Cooled Panel (Fins)
+    print("Training cooled model...")
+    X_cooled = df[['ambient_temp', 'cooled_panel_temp', 'cloud_cover']]
+    y_cooled = df['cooled_power']
+    
+    X_train_c, X_test_c, y_train_c, y_test_c = train_test_split(
+        X_cooled, y_cooled, test_size=0.2, random_state=42
+    )
+    
+    model_cooled = RandomForestRegressor(n_estimators=100, random_state=42)
+    model_cooled.fit(X_train_c, y_train_c)
+    
+    y_pred_c = model_cooled.predict(X_test_c)
+    mae_c = mean_absolute_error(y_test_c, y_pred_c)
+    r2_c = r2_score(y_test_c, y_pred_c)
 
     # 5. Evaluation
-    y_pred = model.predict(X_test)
-    mae = mean_absolute_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-    
     print("-" * 30)
     print("Model Training Complete!")
-    print(f"Mean Absolute Error (MAE): {mae:.4f}")
-    print(f"R-squared (R²) Score: {r2:.4f}")
+    print(f"Normal Model - MAE: {mae_n:.4f}, R²: {r2_n:.4f}")
+    print(f"Cooled Model - MAE: {mae_c:.4f}, R²: {r2_c:.4f}")
     print("-" * 30)
 
     # 6. Serialization
-    print(f"Saving model to {MODEL_FILE}...")
-    joblib.dump(model, MODEL_FILE)
-    print("Model saved successfully.")
+    print("Saving models...")
+    joblib.dump(model_normal, MODEL_NORMAL_FILE)
+    joblib.dump(model_cooled, MODEL_COOLED_FILE)
+    
+    metadata = {
+        "normal_mae": float(mae_n),
+        "normal_r2": float(r2_n),
+        "cooled_mae": float(mae_c),
+        "cooled_r2": float(r2_c),
+        "trained_at": datetime.now().isoformat(),
+        "sklearn_version": sklearn.__version__
+    }
+    
+    with open(METADATA_FILE, 'w') as f:
+        json.dump(metadata, f, indent=4)
+        
+    print(f"Metadata saved to {METADATA_FILE}.")
 
 if __name__ == '__main__':
     train()
